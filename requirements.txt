@@ -1,0 +1,19 @@
+# Core dependencies
+rich>=13.7.0
+click>=8.1.0
+prompt-toolkit>=3.0.0
+
+# Database
+sqlalchemy>=2.0.23
+alembic>=1.13.1
+
+# AI Integration  
+google-generativeai>=0.7.0
+
+# Authentication & Security
+bcrypt>=4.1.2
+PyJWT>=2.8.0
+
+# Utilities
+python-dotenv>=1.0.0
+pydantic>=2.5.0
