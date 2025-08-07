@@ -43,39 +43,196 @@ class TerminalAuth:
         """Get current authenticated user"""
         return self.current_user
     
+
     def show_welcome_screen(self):
-        """Display welcome screen and handle authentication"""
+        """Display enhanced welcome screen with fading ASCII art overlay"""
         self.console.clear()
         
-        # Try to restore previous session
+        # Try to restore previous session first
         if self._try_restore_session():
             return True
         
-        # Welcome panel
-        welcome_text = """[white bold]FAUST MATHEMATICS TERMINAL[/white bold]
-
-[dim]A brilliant but emotionally distant AI math tutor[/dim]
-[dim]Built with Python and Google Gemini AI[/dim]"""
+        # ASCII art for Faust (scaled down and optimized)
+        faust_art = """
+    ╬╬╣▓▓▓███████████████████████████████▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓█▓████▓▓▓▓▒
+    ╣▓▓█████▓▓████████████████████████████▓▓▓▓▓▓▓▓▓▓██▓▓▓▓▓▓▓▓██▓▓▓▓▓▓▓▓██▓█████████
+    ▓██████▓▓██████████████▓███████████████▓▓▓██▓▓▓▓▓███▓▓▓▓▓███████▓▓██▓▓▓███▓▓▓▓▓▓
+    ███████▓▓█████████████▓▓██████▓████████▓▓▓▓▓██▓▓▓▓████▓▓▓█▓███████▓▓███▓╬▓█▓▓▓▓▓
+    ██████▓▓█████████████▓▓███████▓▓█▓▓█████▓▓▓▓▓▓█▓▓▓██████▓▓████████▓▓▓▓███▓▓▓▓█▓▓
+    █▓███▓▓▓███▓▓███████▓▓▓█▓█▓███▓╫▓▓▓██▓███▓▓▓▓▓▓██▓▓▓██████▓██████▓▓▓▓▓▓▓▓██▓▓▓▓▓
+    ▓▓▓█▓▓▓▓█▓▓▓▓█████▓█▓▓██▓▓▓▓█▓▓╟▓▓╬▓▓██▓▓▓▓▓▓▓╬▓▓██▓▓█████▓▓▓█████▓▓▓▓▓╬▓▓▓██▓▓▓
+    ▓▓▓▓▓▓▓█▓▓▓▓███▓█▓▓▓▓▓█▓▓▓▓▓█▓▌╚▓▓▒╫▓▓▓▓▓▓▓▓╣▓▓╬╣╬▓██▓▓██▓▓▓▓▓████▓▓▓▓▓▓▓▓▓▓▓███
+    ▓▓▓▓▓▓▓▓▓▓▓▓█▓█▓▓╬▓▓▓▓▓╣▓▓▓▓▓▓▌░▓▓▓╙▓╣▓▓▓▓╣▓▓╬▓▓╬╬╣▓██▓▓███▓▓▓▓█████▓▓▓▓▓▓▓▓▓▓▓█
+    ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▌╫▓▓▓▓▓╢▓▓▓▓▓▓▌░╟▓▓▒╠▓╣▓▓▓▓╣▓▓╬▓▓▓╬╣▓███▓▓███▓▓▓▓█████▓▓▓▓▓▓▓▓▓█
+    ▓▓▓▓▓▓▓▓▓▓▓▓▓█▓▓▒▓▓▓▓▓▓╟▓▓▓▓▓▓▌░╙▓▓▌░╟▓╣▓▓▓▓▓▓▓▒╟▓▓╬╣▓▓███▓████▓███████▓▓██████▓
+    ▓▓▓█▓▓▓▓▓▓▓▓██▓▓░▓▓▓▓▓▓▐▓█▓▓▓▓▌░░╟╬▓░░╣╬╣▓▓█▓▓▓▓▓╠▓▓▒╠▓▓▓██████████▓█████▓██████
+    ▓▓██▓▓▓▓▓▓▓███▓▓░▓█████▀███████#╦░╬╣▌░Γ╢╬╬╣▓██▓███╬▓█▓╙╬█▓████████████████▓█████
+    ▓▓██▓▓▓▓▓▓▓████▓│▓╬▓▓▓▓░▓████▓▓▒░░╠╬╬▒░!╟╚╬╬▓▓▓▓▓▓▓▒╙▓▓░╠▓▓▓█▓▓█████████████▓███
+    ▓▓██▓█▓▓▓▓▓██╫▓▓░╫▒▓▓▓▓▒╟████▓▓▌░'^╠╢▓░ '╠░▒╚╬╣╬╬▓▓▓▓╠▓▓▄╬█▓╬▓╬╣▓███████████████
+    ╬▓▓█▓▓▓▓▓▓▓█▒╚▓▓▄▓███████████▓╢▓░   ╠╬▓⌐  ╙'░╙▒╩╠╫▓████████████▓▓╬▓█████████████
+    ╬╣▓██▓█▓▓▓██▒░▓███╬███████▀███╬╩╩              '░╣▀╟████████▀████▌░░███▓▓███████
+    ╬╣█████▓▓▓██▒░▓█▓▒╠███████▓▓██░'                   ╚████████▓▓█╬██╩║██░░≥ⁿ▓█████
+    ╬╣▓█▓██▓▓▓▓█░"╙╝╩╙╙╙╙▓▓██▓▓╬╬█░                      ║▓▓▓▓▓▓╬╣█╢╨ .▓▓░░└!░╙█████
+    ╬╬▓█¬║▓▓▓▓▓▓▌      ]▓╬╬╣╣╬╩╚╩▓                      ╫▒░╚╣╣╬╩╠▓▀   ▐▓░░░~ ! ▓████
+    ╬╬▓▌,░▓▓▓▓▓▓█▌      ╟▓▒░░░╦▄▓▒                      ▐▓▄▄▄▄▄▄▓╩    ╬░░░!   ╔█████
+    ╠╬╣▓Q'╚▓▓▓▓▓▓╫▄     ^╫▓▀▀▀▀╙╙                        `└╙╙╙╙╙╙    ▐░╙┘", ,▄██████
+    ░╠▓▓▓▓▄▓▓▓▓▓▓▒╠⌐                                                ]▒░░∩",▓████████
+    ░╠▓█▓▓▓▓▓▓▓▓▓▓ "                        [                       ╩   ,▓██████████
+    │▐▓█▓▓▓▓▓▓▓▓▓▓▌,,                       ░                      ▒,,,▓████████████
+    │░▓▓▓╣▓▓▓▓▓▓▓▓▓▓▓▓µ                     ]                     ╣█▓▓████████▓█████
+    ┐░▓▓▓╣▓▓▓▓▓▓▓▓▓▓▓▓▓▄                                        ╓▓████▓████████▓▓███
+    │]▓╣█╣▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓µ                                    ╓▓███████▓█████████▓▓█
+    ┐▐╬▓█╬▓▓▓▓╬╣╣╬╬▓▓▓▓▓▓█▓µ              ^   ^             ╓▓██████████▓▓████████▓▓
+    │║╬▓▓╬╣▓▓▓▓╣╬╬╬╣▓▓▓▓▓███▓▄,                          ,▄▓█████████████▓▓███████▓▓
+    │╫╬╬▓▓╫▓▓▓▓╬╬╬╣╬▓▓▓▓▓▓▓████▓▓▄                     =░▓█████████████████▓▓███████
+    ¡╬╬╬╬╫╝▓▓▓▓▓╬╬╣╬▓▓▓▓▓╣▓▓███████▒≥,              ;░│░░▓██████████████████▓▓▓█████
+    j╬╬╬╬░▒╣▓▓▓█╬╬╬╬╣▓▓▓▓▓▓▓▓██████▓░││░≥╓      ,≥░│││││¡╫████████████████████▓▓████
+    ▐╬╬╬╬░╠╠▓▓▓▓╬╬╬╬╬▓▓▓▓▓▓▓▓▓█████▓▒░░░░││░≥»ê░│││░░##░░╚▀▓████████████████████▓███
+    ╠╬╬╬╬ !▒╟▓▓▓▓╬╬╬╬╣▓▓▓▓▓▓▓▓▓███▒▒▒░░░░░░░░░░░░░░░░╬░░│''╟█████████████████████▓▓█
+        """
         
-        welcome_panel = Panel.fit(
-            welcome_text,
-            border_style="white",
-            padding=(2, 4),
-            title="[white]◢◤[/white]",
-            title_align="center"
-        )
+        # Create overlay content with fading art effect
+        from rich.align import Align
+        from rich.text import Text
+        import time
         
-        self.console.print(Align.center(welcome_panel))
+        # Show ASCII art with gradual fade out effect - centered
+        art_lines = faust_art.strip().split('\n')
+        fade_levels = ["white", "bright_white", "dim white", "bright_black", "dim bright_black"]
+        
+        # Calculate vertical centering
+        terminal_height = self.console.size.height
+        art_height = len(art_lines)
+        vertical_padding = max(0, (terminal_height - art_height) // 2)
+        
+        for fade_level in fade_levels:
+            # Force complete screen clear with escape sequences
+            self.console.print("\033[2J\033[H", end="")  # Clear screen and move cursor to top
+            self.console.clear()
+            
+            # Add vertical padding to center the art
+            for _ in range(vertical_padding):
+                self.console.print()
+            
+            # Display centered art
+            for line in art_lines:
+                self.console.print(Align.center(f"[{fade_level}]{line}[/{fade_level}]"))
+            
+            time.sleep(0.4)
+        
+        # Force complete clear with multiple methods to ensure no residue
+        self.console.print("\033[2J\033[H", end="")  # ANSI escape sequence clear
+        self.console.clear()  # Rich's clear method
+        import os
+        if os.name == 'nt':  # Windows
+            os.system('cls')
+        else:  # Unix/Linux/MacOS
+            os.system('clear')
+        
+        time.sleep(0.5)  # Pause to ensure complete clear
+        
+        # Clean, elegant title reveal
+        title_text = "F A U S T"
+        subtitle_text = "An AI math tutor and assistant"
+        
+        # Minimalist title design
+        self.console.print("\n" * 8)  # Center vertically
+        
+        # Main title with clean spacing
+        title_display = Text()
+        title_display.append(title_text, style="bold white")
+        self.console.print(Align.center(title_display))
         self.console.print()
         
-        # Authentication required message
-        self.console.print(
-            "[white]Authentication Required[/white]\n"
-            "[dim]Please login or register to continue.[/dim]\n"
-        )
+        # Subtitle with elegant styling
+        subtitle_display = Text()
+        subtitle_display.append(subtitle_text, style="dim white")
+        self.console.print(Align.center(subtitle_display))
+        self.console.print("\n" * 2)
+        
+        # Subtle initialization sequence
+        init_states = [
+            ("Initializing", 0.8),
+            ("Loading knowledge base", 1.0),
+            ("Connecting to AI", 0.9),
+            ("Ready", 0.5)
+        ]
+        
+        for state, delay in init_states:
+            if state == "Ready":
+                self.console.print(Align.center(f"[white]◆ {state}[/white]"))
+            else:
+                with self.console.status(Align.center(f"[dim white]◆ {state}...[/dim white]")):
+                    time.sleep(delay)
+        
+        self.console.print("\n" * 3)
+        
+        # Clean authentication prompt
+        auth_text = Text()
+        auth_text.append("Authentication Required", style="white")
+        self.console.print(Align.center(auth_text))
+        
+        auth_subtitle = Text()
+        auth_subtitle.append("Please login or register to continue", style="dim white")
+        self.console.print(Align.center(auth_subtitle))
+        
+        self.console.print("\n" * 2)
+        
+        # Mathematical decoration - minimal and elegant
+        math_symbols = "∫ ∑ ∞ π δ λ"
+        math_display = Text()
+        math_display.append(math_symbols, style="dim bright_black")
+        self.console.print(Align.center(math_display))
+        
+        self.console.print("\n" * 2)
         
         return self._auth_menu()
-    
+
+    def _show_faust_awakening_animation(self):
+        """Show Faust waking up with mathematical elements"""
+        import random
+        import time
+        
+        # Mathematical equations that "compute" in the background
+        equations = [
+            "∫₋∞^∞ e^(-x²) dx = √π",
+            "e^(iπ) + 1 = 0",
+            "∑_{n=1}^∞ 1/n² = π²/6", 
+            "lim_{x→0} (sin x)/x = 1",
+            "∇²φ = 0"
+        ]
+        
+        self.console.print(Align.center("[dim bright_black]◊ MATHEMATICAL CONSCIOUSNESS LOADING ◊[/dim bright_black]"))
+        self.console.print()
+        
+        # Show equations "calculating"
+        for eq in random.sample(equations, 3):
+            with self.console.status(f"[dim]{eq}[/dim]", spinner="dots"):
+                time.sleep(random.uniform(0.8, 1.5))
+            self.console.print(f"[dim white]✓ {eq}[/dim white]")
+        
+        self.console.print()
+        
+        # Personality loading
+        personality_traits = [
+            "Loading mathematical rigor",
+            "Calibrating academic precision", 
+            "Initializing tsundere protocols",
+            "Setting emotional barriers to 'distant'",
+            "Preparing to be helpful... reluctantly"
+        ]
+        
+        for trait in personality_traits:
+            time.sleep(0.6)
+            self.console.print(f"[dim bright_black]» {trait}[/dim bright_black]")
+        
+        self.console.print()
+        time.sleep(1.5)
+        
+        # Final awakening
+        self.console.print(Align.center("[white]◊ FAUST ONLINE ◊[/white]"))
+        time.sleep(1.0)
+
     def _auth_menu(self) -> bool:
         """Display authentication menu"""
         while True:
