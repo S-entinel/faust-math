@@ -1,5 +1,3 @@
-
-
 import sys
 import signal
 import time
@@ -19,7 +17,7 @@ from .ai_service import get_ai_service
 from .math_renderer import get_math_renderer
 
 class FaustCLI:
-    """Natural chat interface for Faust Math Teacher"""
+    """Natural chat interface for Faust"""
     
     def __init__(self):
         self.config = get_config()
@@ -138,7 +136,8 @@ class FaustCLI:
     
     def _handle_command(self, command: str):
         """Handle slash commands"""
-        cmd = command.strip().lower()
+        cmd_parts = command.strip().split()
+        cmd = cmd_parts[0].lower()
         
         if cmd == '/help':
             self._show_help()
@@ -154,6 +153,8 @@ class FaustCLI:
             self._show_simple_history()
         elif cmd == '/sessions':
             self._show_simple_sessions()
+        elif cmd == '/load':
+            self._handle_load_session(cmd_parts)
         elif cmd == '/logout':
             if Confirm.ask("End session?"):
                 self.auth.logout()
@@ -161,6 +162,22 @@ class FaustCLI:
         else:
             self.console.print(f"[bright_red]Unknown command: {cmd}[/bright_red]")
             self.console.print("[dim]Type /help for available commands[/dim]")
+    
+    def _handle_load_session(self, cmd_parts: List[str]):
+        """Handle loading a specific session by ID"""
+        if len(cmd_parts) < 2:
+            self.console.print("[bright_red]Usage: /load <session_id>[/bright_red]")
+            self.console.print("[dim]Get session IDs from /sessions command[/dim]")
+            return
+        
+        session_id = cmd_parts[1]
+        
+        # Try to load the session
+        if self.session_manager.load_session(session_id):
+            session_info = self.session_manager.get_current_session_info()
+            self.console.print(f"[white]✓ Loaded session: {session_info['title']}[/white]")
+        else:
+            self.console.print("[bright_red]✗ Failed to load session. Check the session ID and try again.[/bright_red]")
     
     def _handle_chat_message(self, message: str):
         """Handle regular chat message with streaming"""
@@ -255,13 +272,14 @@ class FaustCLI:
         """Show available commands"""
         self.console.print()
         self.console.print("[white]Available commands:[/white]")
-        self.console.print("  /help     - Show this help")
-        self.console.print("  /clear    - Clear screen")
-        self.console.print("  /new      - Start new conversation")
-        self.console.print("  /history  - Show recent messages")
-        self.console.print("  /sessions - Show all conversations")
-        self.console.print("  /logout   - End session")
-        self.console.print("  /quit     - Exit application")
+        self.console.print("  /help           - Show this help")
+        self.console.print("  /clear          - Clear screen")
+        self.console.print("  /new            - Start new conversation")
+        self.console.print("  /history        - Show recent messages")
+        self.console.print("  /sessions       - Show all conversations")
+        self.console.print("  /load <id>      - Load conversation by session ID")
+        self.console.print("  /logout         - End session")
+        self.console.print("  /quit           - Exit application")
         self.console.print()
         self.console.print("[dim]Just type your math question to chat with Faust[/dim]")
         self.console.print()
@@ -326,6 +344,7 @@ class FaustCLI:
             current = " (current)" if session['session_id'] == self.session_manager.current_session_id else ""
             
             self.console.print(f"  {i}. {title} - {session['message_count']} messages - {time_str}{current}")
+            self.console.print(f"     [dim]ID: {session['session_id']}[/dim]")
         
         self.console.print()
         self.console.print("[dim]Use /load <session_id> to switch conversations[/dim]")
