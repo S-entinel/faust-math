@@ -1,4 +1,3 @@
-
 import time
 from typing import Dict, Any, List, Optional, Generator
 from datetime import datetime
@@ -35,12 +34,12 @@ class FaustAI:
             # Initialize model with system instruction
             try:
                 self.model = genai.GenerativeModel(
-                    model_name="gemini-2.5-flash",
-                    system_instruction=self._get_base_system_prompt()  # NEW
+                    model_name="gemini-2.0-flash-exp",
+                    system_instruction=self._get_base_system_prompt()
                 )
             except TypeError:
                 # Fallback for older versions
-                self.model = genai.GenerativeModel(model_name="gemini-2.5-flash")
+                self.model = genai.GenerativeModel(model_name="gemini-2.0-flash-exp")
             
             # Test the connection
             test_response = self.model.generate_content("Test connection")
@@ -175,10 +174,90 @@ class FaustAI:
         
         return f"{base_prompt}\n\n{level_prompt}\n\nYour essence: You're a brilliant mathematics professor who's passionate about mathematical knowledge and genuinely cares about student understanding, but you express this through a mix of academic precision, slight defensiveness, and occasional moments where your enthusiasm and caring nature shine through despite your attempts to maintain professional objectivity."
     
+    def summarize_context(self, messages: List[Dict[str, Any]], academic_level: str = 'normal') -> str:
+        """Generate a brief summary of conversation context"""
+        if not messages:
+            return ""
+        
+        try:
+            # Extract key content from messages for summarization
+            content_parts = []
+            for msg in messages[-20:]:  # Only use last 20 messages for summary
+                if 'parts' in msg:
+                    for part in msg['parts']:
+                        if 'text' in part and not part['text'].startswith('[Previous conversation summary'):
+                            content_parts.append(f"{msg.get('role', 'user')}: {part['text'][:150]}")
+                elif 'content' in msg:
+                    if not msg['content'].startswith('[Previous conversation summary'):
+                        content_parts.append(f"{msg.get('role', 'user')}: {msg['content'][:150]}")
+            
+            if not content_parts:
+                return "Previous mathematical discussion"
+            
+            # Create summary prompt
+            context_text = "\n".join(content_parts[-10:])  # Use last 10 for actual summary
+            summary_prompt = f"""Please create a very brief summary (1-2 sentences) of this mathematical conversation. Focus on the main topics and concepts discussed:
+
+{context_text}
+
+Respond with just the summary, no additional commentary."""
+            
+            # Generate summary using AI
+            try:
+                response = self.model.generate_content(summary_prompt)
+                if response and response.text:
+                    summary = response.text.strip()
+                    # Ensure summary is reasonably short
+                    if len(summary) > 200:
+                        summary = summary[:197] + "..."
+                    return summary
+            except Exception:
+                pass
+            
+            # Fallback to keyword-based summary if AI fails
+            return self._create_keyword_summary(content_parts)
+            
+        except Exception as e:
+            self.console.print(f"[dim bright_black]Warning: Context summarization failed: {e}[/dim bright_black]")
+            return "Previous mathematical discussion"
+    
+    def _create_keyword_summary(self, content_parts: List[str]) -> str:
+        """Create a simple keyword-based summary as fallback"""
+        content_text = " ".join(content_parts).lower()
+        
+        # Identify mathematical topics
+        topics = set()
+        math_keywords = {
+            'derivative': 'derivatives',
+            'integral': 'integration', 
+            'limit': 'limits',
+            'equation': 'equations',
+            'solve': 'problem solving',
+            'algebra': 'algebra',
+            'calculus': 'calculus',
+            'geometry': 'geometry',
+            'trigonometry': 'trigonometry',
+            'matrix': 'linear algebra',
+            'probability': 'probability',
+            'statistics': 'statistics',
+            'proof': 'mathematical proofs',
+            'function': 'functions',
+            'graph': 'graphing'
+        }
+        
+        for keyword, topic in math_keywords.items():
+            if keyword in content_text:
+                topics.add(topic)
+        
+        if topics:
+            topic_list = ', '.join(sorted(topics)[:3])
+            return f"Discussion covered {topic_list}"
+        else:
+            return "Mathematical problem-solving discussion"
 
     def send_message_stream(self, message: str, chat_history: List[Dict[str, Any]] = None, 
                           academic_level: str = 'normal') -> Generator[Dict[str, Any], None, None]:
-        """Enhanced send_message_stream with academic level support"""
+        """Enhanced send_message_stream with academic level support and context management"""
         start_time = time.time()
         full_response = ""
         
@@ -186,15 +265,30 @@ class FaustAI:
             # Build system prompt for academic level
             system_prompt = self._build_system_prompt(academic_level)
             
-            # Create or restore chat session with appropriate system prompt
-            if chat_history:
-                # For existing chat, we need to create a new session with updated system prompt
-                chat_session = self.model.start_chat(history=[])
-            else:
-                chat_session = self.model.start_chat(history=[])
+            # Create chat session with managed history
+            chat_session = self.model.start_chat(history=[])
             
-            # Send message with academic-level-specific system instruction
-            full_message = f"{system_prompt}\n\nUser: {message}"
+            # Build the full message with context
+            if chat_history:
+                # Convert chat history to conversation context
+                context_messages = []
+                for entry in chat_history:
+                    if 'parts' in entry and entry['parts']:
+                        # Gemini format
+                        role = entry.get('role', 'user')
+                        text = entry['parts'][0].get('text', '')
+                        if text and not text.startswith('[Previous conversation summary'):
+                            context_messages.append(f"{role.capitalize()}: {text}")
+                
+                if context_messages:
+                    context_text = "\n".join(context_messages[-6:])  # Last 6 messages for immediate context
+                    full_message = f"{system_prompt}\n\nPrevious conversation context:\n{context_text}\n\nCurrent user message: {message}"
+                else:
+                    full_message = f"{system_prompt}\n\nUser: {message}"
+            else:
+                full_message = f"{system_prompt}\n\nUser: {message}"
+            
+            # Send message with streaming
             response = chat_session.send_message(full_message, stream=True)
             
             # Stream the response
@@ -211,7 +305,21 @@ class FaustAI:
             
             # Final response with metadata
             response_time = (time.time() - start_time) * 1000
-            updated_history = self._extract_chat_history(chat_session)
+            
+            # Build updated chat history
+            updated_history = chat_history.copy() if chat_history else []
+            
+            # Add user message
+            updated_history.append({
+                'role': 'user',
+                'parts': [{'text': message}]
+            })
+            
+            # Add assistant response
+            updated_history.append({
+                'role': 'model',
+                'parts': [{'text': full_response}]
+            })
             
             yield {
                 'chunk': '',
@@ -370,7 +478,7 @@ class FaustAI:
     def get_model_info(self) -> Dict[str, Any]:
         """Get information about the current AI model"""
         return {
-            'model_name': 'gemini-2.5-flash',
+            'model_name': 'gemini-2.0-flash-exp',
             'provider': 'Google',
             'teacher': 'Faust',
             'personality': 'Brilliant but emotionally distant math professor',
@@ -380,6 +488,8 @@ class FaustAI:
                 'LaTeX formula rendering',
                 'Conversational math tutoring',
                 'Academic rigor with personality',
+                'Context-aware conversations',
+                'Multi-level academic adaptation',
                 'Algebra, Calculus, Statistics',
                 'Geometry, Linear Algebra, Discrete Math',
                 'Mathematical proofs and theory'

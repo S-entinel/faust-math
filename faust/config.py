@@ -1,4 +1,3 @@
-
 import os
 import json
 from pathlib import Path
@@ -6,7 +5,7 @@ from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
 class Config:
-    """Configuration manager for Faust application"""
+    """Configuration manager for Faust application with context management"""
     
     def __init__(self):
         # Load environment variables
@@ -37,7 +36,32 @@ class Config:
             'math_display': 'unicode',  # 'unicode', 'latex', or 'both'
             'session_timeout': 3600,  # 1 hour in seconds
             'max_history': 100,
-            'log_level': 'INFO'
+            'log_level': 'INFO',
+            
+            # Context Management Settings
+            'context_management': {
+                'max_context_tokens': 10000,
+                'context_display_limit': 5,  # Message pairs to show on session load
+                'auto_summarize': True,
+                'keep_first_message': True,
+                'recent_messages_count': 10  # Messages to keep in full when summarizing
+            },
+            
+            # Academic Level Settings
+            'academic_levels': {
+                'child': {
+                    'max_context_tokens': 8000,  # Shorter context for children
+                    'context_display_limit': 3
+                },
+                'normal': {
+                    'max_context_tokens': 10000,
+                    'context_display_limit': 5
+                },
+                'academic': {
+                    'max_context_tokens': 12000,  # Longer context for academic discussions
+                    'context_display_limit': 7
+                }
+            }
         }
         
         if not self.config_file.exists():
@@ -92,6 +116,14 @@ class Config:
         """Set configuration value"""
         self.settings[key] = value
         self._save_config(self.settings)
+    
+    def get_context_settings(self, academic_level: str = 'normal') -> Dict[str, Any]:
+        """Get context management settings for specific academic level"""
+        base_settings = self.settings.get('context_management', {})
+        level_settings = self.settings.get('academic_levels', {}).get(academic_level, {})
+        
+        # Merge base settings with level-specific overrides
+        return {**base_settings, **level_settings}
     
     def get_database_url(self) -> str:
         """Get SQLite database URL"""

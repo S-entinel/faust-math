@@ -1,4 +1,5 @@
 import uuid
+import re
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.exc import SQLAlchemyError
@@ -27,6 +28,10 @@ class SessionManager:
         self.chat_history = []
         self.current_academic_level = 'normal'  # Default level
         
+        # Context management settings
+        self.max_context_tokens = 10000  # Token limit for context window
+        self.context_display_limit = 5   # Message pairs to show on load
+        
         # Load user's preferred academic level
         self._load_user_academic_level()
 
@@ -40,6 +45,176 @@ class SessionManager:
         except Exception as e:
             self.console.print(f"[dim bright_black]Warning: Could not load academic level: {e}[/dim bright_black]")
             self.current_academic_level = 'normal'
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text (rough approximation)"""
+        # Simple approximation: ~4 characters per token for English text
+        # This is rough but good enough for context management
+        return max(1, len(text) // 4)
+    
+    def _count_context_tokens(self, chat_history: List[Dict[str, Any]]) -> int:
+        """Count total tokens in chat history"""
+        total_tokens = 0
+        for entry in chat_history:
+            if 'parts' in entry:
+                for part in entry['parts']:
+                    if 'text' in part:
+                        total_tokens += self._estimate_tokens(part['text'])
+            elif 'content' in entry:
+                total_tokens += self._estimate_tokens(entry['content'])
+        return total_tokens
+    
+    def _manage_context_window(self, chat_history: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Manage context window to stay under token limit"""
+        if not chat_history:
+            return chat_history
+        
+        current_tokens = self._count_context_tokens(chat_history)
+        
+        if current_tokens <= self.max_context_tokens:
+            return chat_history
+        
+        # Keep first message (important for context)
+        first_message = chat_history[0] if chat_history else None
+        
+        # Keep recent messages (last 10 entries)
+        recent_messages = chat_history[-10:] if len(chat_history) > 10 else chat_history
+        
+        # Messages in the middle need summarization
+        middle_messages = chat_history[1:-10] if len(chat_history) > 11 else []
+        
+        if not middle_messages:
+            return chat_history  # No middle to summarize
+        
+        # Create summary of middle messages
+        summary = self._summarize_middle_context(middle_messages)
+        
+        # Reconstruct context: first + summary + recent
+        managed_context = []
+        
+        if first_message:
+            managed_context.append(first_message)
+        
+        if summary:
+            managed_context.append({
+                'role': 'assistant',
+                'parts': [{'text': f"[Previous conversation summary: {summary}]"}]
+            })
+        
+        managed_context.extend(recent_messages)
+        
+        return managed_context
+    
+    def _summarize_middle_context(self, middle_messages: List[Dict[str, Any]]) -> str:
+        """Summarize middle portion of conversation"""
+        if not middle_messages:
+            return ""
+        
+        # Extract text content from middle messages
+        content_parts = []
+        for entry in middle_messages:
+            if 'parts' in entry:
+                for part in entry['parts']:
+                    if 'text' in part:
+                        content_parts.append(f"{entry.get('role', 'unknown')}: {part['text'][:200]}")
+            elif 'content' in entry:
+                role = entry.get('role', 'unknown')
+                content_parts.append(f"{role}: {entry['content'][:200]}")
+        
+        if not content_parts:
+            return "Previous mathematical discussion"
+        
+        # Create a simple summary based on content analysis
+        content_text = " ".join(content_parts)
+        
+        # Identify mathematical topics
+        topics = set()
+        math_keywords = {
+            'derivative': 'derivatives',
+            'integral': 'integration', 
+            'limit': 'limits',
+            'equation': 'equations',
+            'algebra': 'algebra',
+            'calculus': 'calculus',
+            'geometry': 'geometry',
+            'trigonometry': 'trigonometry',
+            'matrix': 'linear algebra',
+            'probability': 'probability',
+            'statistics': 'statistics'
+        }
+        
+        for keyword, topic in math_keywords.items():
+            if keyword in content_text.lower():
+                topics.add(topic)
+        
+        if topics:
+            topic_list = ', '.join(sorted(topics)[:3])
+            return f"Discussion covered {topic_list} with {len(middle_messages)} message exchanges"
+        else:
+            return f"Mathematical discussion with {len(middle_messages)} message exchanges"
+    
+    def _display_recent_context(self, session_id: str):
+        """Display recent context when loading a session"""
+        try:
+            with self.database.get_session() as session:
+                # Get recent messages for display
+                messages = session.query(Message).filter(
+                    Message.chat_session_id == session.query(ChatSession).filter(
+                        ChatSession.session_id == session_id
+                    ).first().id
+                ).order_by(Message.timestamp.desc()).limit(self.context_display_limit * 2).all()
+                
+                if not messages:
+                    self.console.print("[dim]No previous messages in this session.[/dim]")
+                    return
+                
+                # Reverse to show chronological order
+                messages.reverse()
+                
+                self.console.print()
+                self.console.print("[white]Recent context:[/white]")
+                
+                # Group messages into pairs and display
+                for i in range(0, len(messages), 2):
+                    user_msg = messages[i] if i < len(messages) else None
+                    ai_msg = messages[i + 1] if i + 1 < len(messages) else None
+                    
+                    if user_msg and user_msg.role == 'user':
+                        timestamp = user_msg.timestamp.strftime("%H:%M")
+                        content = self._truncate_message(user_msg.content, 80)
+                        self.console.print(f"[dim]{timestamp}[/dim] [white]YOU:[/white] {content}")
+                    
+                    if ai_msg and ai_msg.role == 'assistant':
+                        timestamp = ai_msg.timestamp.strftime("%H:%M")
+                        content = self._truncate_message(ai_msg.content, 80)
+                        self.console.print(f"[dim]{timestamp}[/dim] [white]FAUST:[/white] {content}")
+                    
+                    if i + 2 < len(messages):  # Not the last pair
+                        self.console.print()
+                
+                # Check if there are older messages and show summary
+                total_messages = session.query(Message).filter(
+                    Message.chat_session_id == session.query(ChatSession).filter(
+                        ChatSession.session_id == session_id
+                    ).first().id
+                ).count()
+                
+                shown_messages = len(messages)
+                if total_messages > shown_messages:
+                    older_count = total_messages - shown_messages
+                    self.console.print()
+                    self.console.print(f"[dim][Context from {older_count} earlier messages available][/dim]")
+                
+                self.console.print()
+                
+        except Exception as e:
+            self.console.print(f"[dim bright_black]Could not load context: {e}[/dim bright_black]")
+    
+    def _truncate_message(self, content: str, max_length: int) -> str:
+        """Truncate message content for display"""
+        if len(content) <= max_length:
+            return content
+        return content[:max_length-3] + "..."
     
     def set_academic_level(self, level: str, session_only: bool = False) -> bool:
         """Set academic level for user or current session"""
@@ -162,7 +337,7 @@ class SessionManager:
             raise
     
     def load_session(self, session_id: str) -> bool:
-        """Load an existing chat session and set appropriate academic level"""
+        """Load an existing chat session and display recent context"""
         try:
             with self.database.get_session() as db_session:
                 chat_session = ensure_user_owns_session(db_session, session_id, self.user_id)
@@ -174,7 +349,10 @@ class SessionManager:
                 # Set as current session
                 self.current_session_id = session_id
                 self.current_session = chat_session.to_dict(include_ai_context=True)
-                self.chat_history = chat_session.get_ai_context()
+                
+                # Load and manage AI context
+                raw_context = chat_session.get_ai_context()
+                self.chat_history = self._manage_context_window(raw_context)
                 
                 # Get effective academic level for this session
                 user = db_session.query(User).filter(User.id == self.user_id).first()
@@ -182,20 +360,15 @@ class SessionManager:
                 effective_level = chat_session.get_effective_academic_level(user_level)
                 self.current_academic_level = effective_level
                 
-                # Load recent messages for display
-                messages = db_session.query(Message).filter(
-                    Message.chat_session_id == chat_session.id
-                ).order_by(Message.timestamp.desc()).limit(10).all()
-                
-                message_count = len(messages)
+                # Show load confirmation
+                message_count = chat_session.message_count
                 level_info = self.ai_service.get_academic_level_info(effective_level)
                 self.console.print(f"[white]✓ Loaded session: {chat_session.title} ({message_count} messages, {level_info['name']})[/white]")
                 
-                return True
+                # Display recent context automatically
+                self._display_recent_context(session_id)
                 
-        except (SQLAlchemyError, ValueError) as e:
-            self.console.print(f"[bright_red]✗ Failed to load session: {e}[/bright_red]")
-            return False
+                return True
                 
         except (SQLAlchemyError, ValueError) as e:
             self.console.print(f"[bright_red]✗ Failed to load session: {e}[/bright_red]")
@@ -279,25 +452,30 @@ class SessionManager:
         self.console.print()
     
     def send_message_stream(self, message: str):
-        """Send message to AI with current academic level - returns generator"""
+        """Send message to AI with managed context - returns generator"""
         if not self.current_session_id:
             # Create a new session if none exists
             self.create_new_session("Math Session")
         
+        # Manage context window before sending
+        managed_context = self._manage_context_window(self.chat_history)
         current_level = self.get_current_academic_level()
-        return self.ai_service.send_message_stream(message, self.chat_history, current_level)
+        
+        return self.ai_service.send_message_stream(message, managed_context, current_level)
     
     def send_message(self, message: str) -> str:
-        """Send message to AI with current academic level (non-streaming version)"""
+        """Send message to AI with managed context (non-streaming version)"""
         if not self.current_session_id:
             # Create a new session if none exists
             self.create_new_session("Math Session")
         
         try:
+            # Manage context window before sending
+            managed_context = self._manage_context_window(self.chat_history)
             current_level = self.get_current_academic_level()
             
             # Send to AI with academic level
-            ai_response = self.ai_service.send_message(message, self.chat_history, current_level)
+            ai_response = self.ai_service.send_message(message, managed_context, current_level)
             
             if not ai_response['success']:
                 return ai_response['response']
@@ -322,7 +500,7 @@ class SessionManager:
             return "I... I seem to be having technical difficulties. Please try again."
     
     def _save_message_to_db(self, user_message: str, ai_response: str, tokens_used: int = None, response_time: int = None):
-        """Save conversation messages to database"""
+        """Save conversation messages to database with context management"""
         try:
             with self.database.get_session() as session:
                 chat_session = ensure_user_owns_session(session, self.current_session_id, self.user_id)
@@ -348,7 +526,10 @@ class SessionManager:
                 # Update session
                 chat_session.message_count += 2
                 chat_session.last_active = datetime.utcnow()
-                chat_session.store_ai_context(self.chat_history)
+                
+                # Store managed context (not raw chat history)
+                managed_context = self._manage_context_window(self.chat_history)
+                chat_session.store_ai_context(managed_context)
                 
                 # Auto-generate title for first message
                 if chat_session.message_count == 2 and chat_session.title == "New Math Session":
@@ -522,7 +703,9 @@ class SessionManager:
             'created_at': self.current_session['created_at'],
             'last_active': self.current_session['last_active'],
             'academic_level': current_level,
-            'academic_level_info': level_info
+            'academic_level_info': level_info,
+            'context_tokens': self._count_context_tokens(self.chat_history),
+            'max_tokens': self.max_context_tokens
         }
 
 def create_session_manager(user_id: int) -> SessionManager:
