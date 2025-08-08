@@ -13,7 +13,7 @@ A brilliant AI math tutor that runs in your terminal. Faust adapts her explanati
 ## Installation
 
 ```bash
-pip install git+https://github.com/yourusername/faust-math.git
+pip install git+https://github.com/S-entinel/faust-math.git
 ```
 
 ## Setup
