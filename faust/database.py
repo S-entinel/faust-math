@@ -1,14 +1,13 @@
-
-
 import uuid
 import json
 import bcrypt
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, Boolean, ForeignKey, Index, JSON
+from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, Boolean, ForeignKey, Index, JSON, Enum
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, Session
 from sqlalchemy.types import TypeDecorator, VARCHAR
+import enum
 
 from .config import get_config
 
@@ -31,6 +30,13 @@ class UUID(TypeDecorator):
         if value is None:
             return value
         return str(value)
+    
+
+class AcademicLevel(enum.Enum):
+    """Academic difficulty levels for adaptive AI responses"""
+    CHILD = "child"          # Under 16 - elementary/middle school  
+    NORMAL = "normal"        # Default - high school level
+    ACADEMIC = "academic"    # College to PhD level
 
 class User(Base):
     """User model for authentication and preferences"""
@@ -54,9 +60,19 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_active = Column(DateTime, default=datetime.utcnow, nullable=False)
     last_login = Column(DateTime, nullable=True)
+
+    # Enhanced academic level support
+    academic_level = Column(Enum(AcademicLevel), default=AcademicLevel.NORMAL, nullable=False)
     
     # User preferences as JSON
-    preferences = Column(JSON, default=dict)
+    preferences = Column(JSON, default=lambda: {
+        'theme': 'dark',
+        'math_display': 'unicode',
+        'auto_save': True,
+        'default_academic_level': 'normal',
+        'show_academic_hints': True,
+        'preferred_explanation_style': 'balanced'  # concise, balanced, detailed
+    })
     
     # Relationships
     chat_sessions = relationship("ChatSession", back_populates="user", cascade="all, delete-orphan")
@@ -87,14 +103,31 @@ class User(Base):
             return False
         return bcrypt.checkpw(password.encode('utf-8'), self.password_hash.encode('utf-8'))
     
+
+    def set_academic_level(self, level: str):
+        """Set user's academic level with validation"""
+        if level.lower() in ['child', 'normal', 'academic']:
+            self.academic_level = AcademicLevel(level.lower())
+            # Update preferences to match
+            if not self.preferences:
+                self.preferences = {}
+            self.preferences['default_academic_level'] = level.lower()
+        else:
+            raise ValueError(f"Invalid academic level: {level}. Must be 'child', 'normal', or 'academic'")
+    
+    def get_academic_level(self) -> str:
+        """Get current academic level as string"""
+        return self.academic_level.value if self.academic_level else 'normal'
+    
     def to_dict(self, include_sensitive=False) -> Dict[str, Any]:
-        """Convert to dictionary for API responses"""
+        """Enhanced to_dict with academic level"""
         data = {
             'id': self.id,
             'username': self.username,
             'email': self.email,
             'display_name': self.display_name,
             'is_active': self.is_active,
+            'academic_level': self.get_academic_level(),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_active': self.last_active.isoformat() if self.last_active else None,
             'last_login': self.last_login.isoformat() if self.last_login else None,
@@ -105,6 +138,7 @@ class User(Base):
             data['has_password'] = bool(self.password_hash)
         
         return data
+    
 
 class ChatSession(Base):
     """Chat session with AI context persistence"""
@@ -132,6 +166,9 @@ class ChatSession(Base):
     
     # Status
     is_archived = Column(Boolean, default=False, nullable=False)
+
+    #Session-specific academic level override
+    session_academic_level = Column(Enum(AcademicLevel), nullable=True)  # None = use user default
     
     # Relationships
     user = relationship("User", back_populates="chat_sessions")
@@ -165,8 +202,23 @@ class ChatSession(Base):
         """Security check: verify session belongs to user"""
         return self.user_id == user_id
     
+    def set_session_academic_level(self, level: str = None):
+        """Set academic level for this specific session"""
+        if level is None:
+            self.session_academic_level = None
+        elif level.lower() in ['child', 'normal', 'academic']:
+            self.session_academic_level = AcademicLevel(level.lower())
+        else:
+            raise ValueError(f"Invalid academic level: {level}")
+    
+    def get_effective_academic_level(self, user_level: str = 'normal') -> str:
+        """Get the academic level to use for this session"""
+        if self.session_academic_level:
+            return self.session_academic_level.value
+        return user_level
+    
     def to_dict(self, include_ai_context: bool = False) -> Dict[str, Any]:
-        """Convert to dictionary"""
+        """Enhanced to_dict with academic level info"""
         data = {
             'id': self.id,
             'session_id': self.session_id,
@@ -175,7 +227,8 @@ class ChatSession(Base):
             'message_count': self.message_count,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_active': self.last_active.isoformat() if self.last_active else None,
-            'is_archived': self.is_archived
+            'is_archived': self.is_archived,
+            'session_academic_level': self.session_academic_level.value if self.session_academic_level else None
         }
         
         if include_ai_context:
@@ -300,8 +353,9 @@ def get_user_by_email(session: Session, email: str) -> Optional[User]:
         User.is_active == True
     ).first()
 
-def create_user(session: Session, username: str, password: str, email: str = None, display_name: str = None) -> User:
-    """Create a new user"""
+def create_user(session: Session, username: str, password: str, email: str = None, 
+                display_name: str = None, academic_level: str = 'normal') -> User:
+    """Enhanced create_user with academic level support"""
     # Check if username already exists
     existing = get_user_by_username(session, username)
     if existing:
@@ -320,10 +374,14 @@ def create_user(session: Session, username: str, password: str, email: str = Non
         preferences={
             'theme': 'dark',
             'math_display': 'unicode',
-            'auto_save': True
+            'auto_save': True,
+            'default_academic_level': academic_level,
+            'show_academic_hints': True,
+            'preferred_explanation_style': 'balanced'
         }
     )
     user.set_password(password)
+    user.set_academic_level(academic_level)
     user.last_login = datetime.utcnow()
     
     session.add(user)

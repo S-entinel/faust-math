@@ -1,4 +1,3 @@
-
 import uuid
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
@@ -26,9 +25,108 @@ class SessionManager:
         self.current_session = None
         self.current_session_id = None
         self.chat_history = []
+        self.current_academic_level = 'normal'  # Default level
+        
+        # Load user's preferred academic level
+        self._load_user_academic_level()
+
+    def _load_user_academic_level(self):
+        """Load user's preferred academic level from database"""
+        try:
+            with self.database.get_session() as session:
+                user = session.query(User).filter(User.id == self.user_id).first()
+                if user:
+                    self.current_academic_level = user.get_academic_level()
+        except Exception as e:
+            self.console.print(f"[dim bright_black]Warning: Could not load academic level: {e}[/dim bright_black]")
+            self.current_academic_level = 'normal'
     
-    def create_new_session(self, title: str = None) -> str:
-        """Create a new chat session"""
+    def set_academic_level(self, level: str, session_only: bool = False) -> bool:
+        """Set academic level for user or current session"""
+        valid_levels = ['child', 'normal', 'academic']
+        if level.lower() not in valid_levels:
+            self.console.print(f"[bright_red]✗ Invalid academic level. Must be one of: {', '.join(valid_levels)}[/bright_red]")
+            return False
+        
+        level = level.lower()
+        
+        try:
+            with self.database.get_session() as session:
+                if session_only and self.current_session_id:
+                    # Set level for current session only
+                    chat_session = ensure_user_owns_session(session, self.current_session_id, self.user_id)
+                    chat_session.set_session_academic_level(level)
+                    session.commit()
+                    
+                    self.current_academic_level = level
+                    self.current_session = chat_session.to_dict(include_ai_context=True)
+                    
+                    level_info = self.ai_service.get_academic_level_info(level)
+                    self.console.print(f"[white]✓ Session academic level set to: {level_info['name']}[/white]")
+                    
+                else:
+                    # Set level for user (affects all new sessions)
+                    user = session.query(User).filter(User.id == self.user_id).first()
+                    if user:
+                        user.set_academic_level(level)
+                        session.commit()
+                    
+                    # Also update current session if exists
+                    if self.current_session_id:
+                        chat_session = ensure_user_owns_session(session, self.current_session_id, self.user_id)
+                        chat_session.set_session_academic_level(level)
+                        session.commit()
+                        self.current_session = chat_session.to_dict(include_ai_context=True)
+                    
+                    self.current_academic_level = level
+                    level_info = self.ai_service.get_academic_level_info(level)
+                    self.console.print(f"[white]✓ Academic level set to: {level_info['name']} ({level_info['description']})[/white]")
+                
+                return True
+                
+        except Exception as e:
+            self.console.print(f"[bright_red]✗ Failed to set academic level: {e}[/bright_red]")
+            return False
+    
+    def get_current_academic_level(self) -> str:
+        """Get the effective academic level for current session"""
+        if self.current_session and self.current_session.get('session_academic_level'):
+            return self.current_session['session_academic_level']
+        return self.current_academic_level
+    
+    def show_academic_level_info(self):
+        """Display current academic level information"""
+        current_level = self.get_current_academic_level()
+        level_info = self.ai_service.get_academic_level_info(current_level)
+        
+        # Create info table
+        table = Table(show_header=False, box=None, border_style="white")
+        table.add_column("Field", style="white", width=18)
+        table.add_column("Value", style="white")
+        
+        table.add_row("Current Level", f"{level_info['name']}")
+        table.add_row("Description", level_info['description'])
+        table.add_row("Complexity", level_info['complexity'])
+        table.add_row("Teaching Style", level_info['teaching_style'])
+        table.add_row("Typical Topics", ", ".join(level_info['topics'][:3]) + "...")
+        
+        # Session-specific info
+        if self.current_session and self.current_session.get('session_academic_level'):
+            table.add_row("Scope", "Session Only")
+        else:
+            table.add_row("Scope", "User Default")
+        
+        panel = Panel.fit(
+            table,
+            title="[white]ACADEMIC LEVEL SETTINGS[/white]",
+            border_style="white",
+            padding=(1, 2)
+        )
+        self.console.print(panel)
+        self.console.print()
+    
+    def create_new_session(self, title: str = None, academic_level: str = None) -> str:
+        """Create a new chat session with optional academic level"""
         try:
             with self.database.get_session() as session:
                 # Create new chat session
@@ -39,6 +137,10 @@ class SessionManager:
                     title=title or "New Math Session"
                 )
                 
+                # Set academic level for session if specified
+                if academic_level:
+                    chat_session.set_session_academic_level(academic_level)
+                
                 session.add(chat_session)
                 session.commit()
                 
@@ -47,7 +149,12 @@ class SessionManager:
                 self.current_session = chat_session.to_dict(include_ai_context=True)
                 self.chat_history = []
                 
-                self.console.print(f"[white]✓ Created new session: {title or 'New Math Session'}[/white]")
+                # Update current academic level
+                effective_level = chat_session.get_effective_academic_level(self.current_academic_level)
+                self.current_academic_level = effective_level
+                
+                level_info = self.ai_service.get_academic_level_info(effective_level)
+                self.console.print(f"[white]✓ Created new session: {title or 'New Math Session'} ({level_info['name']})[/white]")
                 return session_id
                 
         except SQLAlchemyError as e:
@@ -55,7 +162,7 @@ class SessionManager:
             raise
     
     def load_session(self, session_id: str) -> bool:
-        """Load an existing chat session"""
+        """Load an existing chat session and set appropriate academic level"""
         try:
             with self.database.get_session() as db_session:
                 chat_session = ensure_user_owns_session(db_session, session_id, self.user_id)
@@ -69,15 +176,26 @@ class SessionManager:
                 self.current_session = chat_session.to_dict(include_ai_context=True)
                 self.chat_history = chat_session.get_ai_context()
                 
+                # Get effective academic level for this session
+                user = db_session.query(User).filter(User.id == self.user_id).first()
+                user_level = user.get_academic_level() if user else 'normal'
+                effective_level = chat_session.get_effective_academic_level(user_level)
+                self.current_academic_level = effective_level
+                
                 # Load recent messages for display
                 messages = db_session.query(Message).filter(
                     Message.chat_session_id == chat_session.id
                 ).order_by(Message.timestamp.desc()).limit(10).all()
                 
                 message_count = len(messages)
-                self.console.print(f"[white]✓ Loaded session: {chat_session.title} ({message_count} recent messages)[/white]")
+                level_info = self.ai_service.get_academic_level_info(effective_level)
+                self.console.print(f"[white]✓ Loaded session: {chat_session.title} ({message_count} messages, {level_info['name']})[/white]")
                 
                 return True
+                
+        except (SQLAlchemyError, ValueError) as e:
+            self.console.print(f"[bright_red]✗ Failed to load session: {e}[/bright_red]")
+            return False
                 
         except (SQLAlchemyError, ValueError) as e:
             self.console.print(f"[bright_red]✗ Failed to load session: {e}[/bright_red]")
@@ -99,7 +217,7 @@ class SessionManager:
             return []
     
     def show_sessions_table(self):
-        """Display sessions in a formatted table"""
+        """Display sessions with academic level information"""
         sessions = self.list_sessions()
         
         if not sessions:
@@ -109,6 +227,7 @@ class SessionManager:
         table = Table(show_header=True, header_style="white", border_style="white", box=None)
         table.add_column("#", style="dim", width=3)
         table.add_column("Title", style="white", min_width=20)
+        table.add_column("Level", style="cyan", width=10)
         table.add_column("Messages", justify="center", width=8)
         table.add_column("Last Active", style="dim", width=12)
         table.add_column("ID", style="dim", width=10)
@@ -134,9 +253,17 @@ class SessionManager:
             if session_data['session_id'] == self.current_session_id:
                 title = f"[white]→ {title}[/white]"
             
+            # Academic level display
+            session_level = session_data.get('session_academic_level')
+            if session_level:
+                level_display = session_level.upper()
+            else:
+                level_display = "DEFAULT"
+            
             table.add_row(
                 str(i),
                 title,
+                level_display,
                 str(session_data['message_count']),
                 time_str,
                 session_data['session_id'][:8]
@@ -152,22 +279,25 @@ class SessionManager:
         self.console.print()
     
     def send_message_stream(self, message: str):
-        """Send message to AI with streaming - returns generator"""
+        """Send message to AI with current academic level - returns generator"""
         if not self.current_session_id:
             # Create a new session if none exists
             self.create_new_session("Math Session")
         
-        return self.ai_service.send_message_stream(message, self.chat_history)
+        current_level = self.get_current_academic_level()
+        return self.ai_service.send_message_stream(message, self.chat_history, current_level)
     
     def send_message(self, message: str) -> str:
-        """Send message to AI and save to database (non-streaming version)"""
+        """Send message to AI with current academic level (non-streaming version)"""
         if not self.current_session_id:
             # Create a new session if none exists
             self.create_new_session("Math Session")
         
         try:
-            # Send to AI
-            ai_response = self.ai_service.send_message(message, self.chat_history)
+            current_level = self.get_current_academic_level()
+            
+            # Send to AI with academic level
+            ai_response = self.ai_service.send_message(message, self.chat_history, current_level)
             
             if not ai_response['success']:
                 return ai_response['response']
@@ -374,12 +504,15 @@ class SessionManager:
         return title if title else "Math Session"
     
     def get_current_session_info(self) -> Dict[str, Any]:
-        """Get information about current session"""
+        """Get information about current session including academic level"""
         if not self.current_session:
             return {
                 'active': False,
                 'message': 'No active session'
             }
+        
+        current_level = self.get_current_academic_level()
+        level_info = self.ai_service.get_academic_level_info(current_level)
         
         return {
             'active': True,
@@ -387,7 +520,9 @@ class SessionManager:
             'title': self.current_session['title'],
             'message_count': self.current_session['message_count'],
             'created_at': self.current_session['created_at'],
-            'last_active': self.current_session['last_active']
+            'last_active': self.current_session['last_active'],
+            'academic_level': current_level,
+            'academic_level_info': level_info
         }
 
 def create_session_manager(user_id: int) -> SessionManager:

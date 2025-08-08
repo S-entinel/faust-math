@@ -1,4 +1,5 @@
 import sys
+import os
 import signal
 import time
 import random
@@ -9,6 +10,8 @@ from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.text import Text
 from rich.live import Live
+from rich.table import Table
+from rich.panel import Panel
 
 from .config import get_config
 from .auth import get_auth
@@ -88,12 +91,17 @@ class FaustCLI:
         time.sleep(0.5)  # Brief pause for realism
     
     def _show_connection_established(self):
-        """Show connection to Faust"""
+        """Enhanced connection display with academic level info"""
         user = self.auth.get_current_user()
         username = user.get('display_name') or user.get('username')
         
         self.console.print(f"[bright_black]Connected to FAUST-AI[/bright_black]")
         self.console.print(f"[bright_black]User: {username}[/bright_black]")
+        
+        # Show current academic level
+        current_level = self.session_manager.get_current_academic_level()
+        level_info = self.ai_service.get_academic_level_info(current_level)
+        self.console.print(f"[bright_black]Academic Level: {level_info['name']}[/bright_black]")
         self.console.print()
         
         # Faust's greeting
@@ -101,11 +109,12 @@ class FaustCLI:
         self.console.print("[bright_black]Faust is online[/bright_black]")
         time.sleep(0.8)
         
-        greeting = self.ai_service.get_conversation_starter()
+        greeting = self.ai_service.get_conversation_starter(current_level)
         self._display_faust_message(greeting)
         
         self.console.print()
         self.console.print("[dim]Type your message or /help for commands[/dim]")
+        self.console.print(f"[dim]Current academic level: {level_info['name']} (use /level to change)[/dim]")
         self.console.print()
     
     def _conversation_loop(self):
@@ -135,7 +144,7 @@ class FaustCLI:
                 self.console.print(f"[bright_red]Error: {e}[/bright_red]")
     
     def _handle_command(self, command: str):
-        """Handle slash commands"""
+        """Enhanced command handler with academic level commands"""
         cmd_parts = command.strip().split()
         cmd = cmd_parts[0].lower()
         
@@ -147,14 +156,17 @@ class FaustCLI:
         elif cmd == '/clear':
             self.console.clear()
         elif cmd == '/new':
-            self.session_manager.create_new_session("New Discussion")
-            self.console.print("[bright_black]Started new conversation[/bright_black]")
+            self._handle_new_session_command(cmd_parts)
         elif cmd == '/history':
             self._show_simple_history()
         elif cmd == '/sessions':
             self._show_simple_sessions()
         elif cmd == '/load':
             self._handle_load_session(cmd_parts)
+        elif cmd == '/level':
+            self._handle_academic_level_command(cmd_parts)
+        elif cmd == '/info':
+            self._show_session_info()
         elif cmd == '/logout':
             if Confirm.ask("End session?"):
                 self.auth.logout()
@@ -163,6 +175,35 @@ class FaustCLI:
             self.console.print(f"[bright_red]Unknown command: {cmd}[/bright_red]")
             self.console.print("[dim]Type /help for available commands[/dim]")
     
+    def _handle_new_session_command(self, cmd_parts: List[str]):
+        """Handle creating new session with optional academic level"""
+        title = "New Discussion"
+        academic_level = None
+        
+        # Parse arguments: /new [title] --level [level]
+        if len(cmd_parts) > 1:
+            args = cmd_parts[1:]
+            
+            # Look for --level flag
+            if '--level' in args:
+                level_index = args.index('--level')
+                if level_index + 1 < len(args):
+                    academic_level = args[level_index + 1]
+                    # Remove level args from title
+                    args = args[:level_index] + args[level_index + 2:]
+            
+            # Remaining args are title
+            if args:
+                title = ' '.join(args)
+        
+        self.session_manager.create_new_session(title, academic_level)
+        
+        # Show greeting in new academic level
+        current_level = self.session_manager.get_current_academic_level()
+        greeting = self.ai_service.get_conversation_starter(current_level)
+        self._display_faust_message(greeting)
+        self.console.print()
+
     def _handle_load_session(self, cmd_parts: List[str]):
         """Handle loading a specific session by ID"""
         if len(cmd_parts) < 2:
@@ -178,6 +219,132 @@ class FaustCLI:
             self.console.print(f"[white]✓ Loaded session: {session_info['title']}[/white]")
         else:
             self.console.print("[bright_red]✗ Failed to load session. Check the session ID and try again.[/bright_red]")
+    
+    def _handle_academic_level_command(self, cmd_parts: List[str]):
+        """Handle academic level commands"""
+        if len(cmd_parts) == 1:
+            # Show current level info
+            self.session_manager.show_academic_level_info()
+            return
+        
+        subcommand = cmd_parts[1].lower()
+        
+        if subcommand == 'set':
+            if len(cmd_parts) < 3:
+                self.console.print("[bright_red]Usage: /level set <child|normal|academic> [--session-only][/bright_red]")
+                return
+            
+            level = cmd_parts[2].lower()
+            session_only = '--session-only' in cmd_parts
+            
+            if self.session_manager.set_academic_level(level, session_only):
+                # Give Faust a chance to react to level change
+                current_level = self.session_manager.get_current_academic_level()
+                reaction = self._get_level_change_reaction(current_level)
+                self._display_faust_message(reaction)
+                self.console.print()
+        
+        elif subcommand == 'info':
+            self.session_manager.show_academic_level_info()
+        
+        elif subcommand == 'list':
+            self._show_available_levels()
+        
+        else:
+            self.console.print("[bright_red]Usage: /level [set <level>] [info] [list][/bright_red]")
+    
+    def _show_available_levels(self):
+        """Display all available academic levels"""
+        levels = ['child', 'normal', 'academic']
+        
+        table = Table(show_header=True, header_style="white", border_style="white", box=None)
+        table.add_column("Level", style="white", width=12)
+        table.add_column("Description", style="white", min_width=25)
+        table.add_column("Complexity", style="cyan", width=12)
+        table.add_column("Example Topics", style="dim", min_width=30)
+        
+        for level in levels:
+            level_info = self.ai_service.get_academic_level_info(level)
+            current = " (current)" if level == self.session_manager.get_current_academic_level() else ""
+            
+            table.add_row(
+                f"{level_info['name']}{current}",
+                level_info['description'],
+                level_info['complexity'],
+                ", ".join(level_info['topics'][:2]) + "..."
+            )
+        
+        panel = Panel.fit(
+            table,
+            title="[white]AVAILABLE ACADEMIC LEVELS[/white]",
+            border_style="white",
+            padding=(1, 2)
+        )
+        self.console.print(panel)
+        self.console.print()
+        
+        self.console.print("[dim]Use '/level set <level>' to change academic level[/dim]")
+        self.console.print("[dim]Use '/level set <level> --session-only' to change for current session only[/dim]")
+        self.console.print()
+    
+    def _get_level_change_reaction(self, new_level: str) -> str:
+        """Get Faust's reaction to academic level change"""
+        reactions = {
+            'child': [
+                "Oh! Well, I suppose I should adjust my explanations for a younger student. Don't worry, I'll be... gentler with the mathematical concepts.",
+                "I see we're switching to a more elementary approach. Very well, I can work with students of all ages... though I do hope you'll still appreciate the beauty of mathematics!",
+                "Hmph, fine. I'll use simpler language, but the mathematical rigor remains the same! Mathematics is mathematics, regardless of age."
+            ],
+            'normal': [
+                "Ah, back to the standard level. This is... comfortable territory for most students. We can cover proper high school mathematics now.",
+                "Good, we're at a reasonable academic level. I can provide appropriately challenging explanations without overwhelming you.",
+                "Normal mode it is. Perfect for building solid mathematical foundations... which you'll need if you want to advance further."
+            ],
+            'academic': [
+                "Excellent! Finally, someone ready for serious mathematical discourse. I can use proper notation and advanced concepts without holding back.",
+                "Academic level, I see. Good. Now we can engage in real mathematical analysis without... dumbing things down unnecessarily.",
+                "Perfect. I was getting tired of oversimplifying everything. Let's discuss mathematics at the level it deserves to be discussed."
+            ]
+        }
+        
+        import random
+        return random.choice(reactions.get(new_level, ["Level changed. Let's continue with our mathematical discussion."]))
+    
+    def _show_session_info(self):
+        """Display current session and academic level information"""
+        session_info = self.session_manager.get_current_session_info()
+        
+        if not session_info['active']:
+            self.console.print("[dim]No active session. Start a conversation first.[/dim]")
+            return
+        
+        level_info = session_info['academic_level_info']
+        
+        table = Table(show_header=False, box=None, border_style="white")
+        table.add_column("Field", style="white", width=15)
+        table.add_column("Value", style="white")
+        
+        table.add_row("Session", session_info['title'])
+        table.add_row("Messages", str(session_info['message_count']))
+        table.add_row("Academic Level", f"{level_info['name']}")
+        table.add_row("Complexity", level_info['complexity'])
+        table.add_row("Session ID", session_info['session_id'][:12] + "...")
+        
+        # Format timestamps
+        created = datetime.fromisoformat(session_info['created_at']).strftime("%Y-%m-%d %H:%M")
+        last_active = datetime.fromisoformat(session_info['last_active']).strftime("%Y-%m-%d %H:%M")
+        
+        table.add_row("Created", created)
+        table.add_row("Last Active", last_active)
+        
+        panel = Panel.fit(
+            table,
+            title="[white]CURRENT SESSION INFO[/white]",
+            border_style="white",
+            padding=(1, 2)
+        )
+        self.console.print(panel)
+        self.console.print()
     
     def _handle_chat_message(self, message: str):
         """Handle regular chat message with streaming"""
@@ -269,19 +436,32 @@ class FaustCLI:
         print()  # New line after message
     
     def _show_help(self):
-        """Show available commands"""
+        """Enhanced help with academic level commands"""
         self.console.print()
         self.console.print("[white]Available commands:[/white]")
-        self.console.print("  /help           - Show this help")
-        self.console.print("  /clear          - Clear screen")
-        self.console.print("  /new            - Start new conversation")
-        self.console.print("  /history        - Show recent messages")
-        self.console.print("  /sessions       - Show all conversations")
-        self.console.print("  /load <id>      - Load conversation by session ID")
-        self.console.print("  /logout         - End session")
-        self.console.print("  /quit           - Exit application")
+        self.console.print("  [white]Basic Commands:[/white]")
+        self.console.print("    /help           - Show this help")
+        self.console.print("    /clear          - Clear screen")
+        self.console.print("    /info           - Show session information")
+        self.console.print("    /quit           - Exit application")
+        self.console.print()
+        self.console.print("  [white]Session Management:[/white]")
+        self.console.print("    /new [title]    - Start new conversation")
+        self.console.print("    /history        - Show recent messages")
+        self.console.print("    /sessions       - Show all conversations")
+        self.console.print("    /load <id>      - Load conversation by session ID")
+        self.console.print()
+        self.console.print("  [white]Academic Level Control:[/white]")
+        self.console.print("    /level          - Show current academic level")
+        self.console.print("    /level list     - Show all available levels")
+        self.console.print("    /level set <level>  - Set academic level (child/normal/academic)")
+        self.console.print("    /level set <level> --session-only  - Set level for current session only")
+        self.console.print()
+        self.console.print("  [white]Account:[/white]")
+        self.console.print("    /logout         - End session")
         self.console.print()
         self.console.print("[dim]Just type your math question to chat with Faust[/dim]")
+        self.console.print("[dim]Faust adapts her explanations based on your academic level[/dim]")
         self.console.print()
     
     def _show_simple_history(self):
@@ -365,7 +545,6 @@ def main(debug: bool, config_dir: Optional[str]):
     try:
         # Override config directory if specified
         if config_dir:
-            import os
             os.environ['FAUST_CONFIG_DIR'] = config_dir
         
         # Set debug mode
