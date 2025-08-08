@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "faust-math"
+version = "2.0.0"
+description = "A math teacher and assistant in your terminal"
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [
+    {name = "Sentinel"},
+]
+keywords = ["math", "education", "ai", "teacher", "terminal", "cli", "gemini"]
+classifiers = [
+    "Intended Audience :: Education", 
+    "Topic :: Education :: Computer Aided Instruction (CAI)",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10", 
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Environment :: Console",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "rich>=13.7.0",
+    "click>=8.1.0",
+    "prompt-toolkit>=3.0.0", 
+    "sqlalchemy>=2.0.23",
+    "google-generativeai>=0.7.0",
+    "bcrypt>=4.1.2",
+    "PyJWT>=2.8.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.5.0",
+]
+
+[project.scripts]
+faust = "faust.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "isort>=5.0",
+    "mypy>=1.0",
+]
+
+[tool.setuptools]
+packages = ["faust"]
+
+[tool.setuptools.package-data]
+faust = ["*.txt", "*.md"]
